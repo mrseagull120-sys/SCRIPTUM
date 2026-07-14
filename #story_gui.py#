@@ -1,0 +1,111 @@
+
+import threading
+import tkinter as tk
+from tkinter import ttk, scrolledtext
+
+import torch
+import tiktoken
+from model import GPT
+
+
+class StoryGeneratorApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("generator de povesti")
+        self.root.geometry("800x600")
+
+        self.model = None
+        self.enc = tiktoken.get_encoding("gpt2")
+        self.device = "cpu"  
+
+        self._build_ui()
+        self._load_model_async()
+
+    def _build_ui(self):
+    
+        prompt_frame = ttk.Frame(self.root, padding=10)
+        prompt_frame.pack(fill="x")
+
+        ttk.Label(prompt_frame, text="Idee:").pack(anchor="w")
+        self.prompt_entry = ttk.Entry(prompt_frame, font=("Arial", 11))
+        self.prompt_entry.pack(fill="x", pady=(2, 8))
+        self.prompt_entry.insert(0, "Once upon a time in a forgotten forest,")
+
+
+        settings_frame = ttk.Frame(prompt_frame)
+        settings_frame.pack(fill="x")
+
+        ttk.Label(settings_frame, text="Lungime (tokens):").pack(side="left")
+        self.length_var = tk.IntVar(value=200)
+        ttk.Spinbox(settings_frame, from_=20, to=800, textvariable=self.length_var,
+                    width=6).pack(side="left", padx=(4, 20))
+
+        self.generate_btn = ttk.Button(settings_frame, text="Genereaza",
+                                        command=self.on_generate, state="disabled")
+        self.generate_btn.pack(side="left", padx=(10, 0))
+
+        self.status_var = tk.StringVar(value="Loading...")
+        ttk.Label(self.root, textvariable=self.status_var, padding=(10, 0)).pack(anchor="w")
+
+        output_frame = ttk.Frame(self.root, padding=10)
+        output_frame.pack(fill="both", expand=True)
+
+        self.output_box = scrolledtext.ScrolledText(
+            output_frame, wrap="word", font=("Georgia", 12)
+        )
+        self.output_box.pack(fill="both", expand=True)
+
+    def _load_model_async(self):
+    
+        def load():
+            model = GPT.from_pretrained("gpt2", dict(dropout=0.0))
+            model.eval()
+            model.to(self.device)
+            self.model = model
+            self.status_var.set("Model incarcat. Status:pregatit.")
+            self.generate_btn.config(state="normal")
+
+        threading.Thread(target=load, daemon=True).start()
+
+    def on_generate(self):
+        self.generate_btn.config(state="disabled")
+        self.status_var.set("Generating...")
+        self.output_box.delete("1.0", tk.END)
+
+        prompt = self.prompt_entry.get().strip() or "Once upon a time,"
+        max_tokens = self.length_var.get()
+        temperature = self.temp_var.get()
+
+        threading.Thread(target=self._generate, args=(prompt, max_tokens),
+                          daemon=True).start()
+
+    def _generate(self, prompt, max_tokens):
+        try:
+            start_ids = self.enc.encode(prompt, allowed_special={"<|endoftext|>"})
+            x = torch.tensor(start_ids, dtype=torch.long, device=self.device)[None, ...]
+
+            with torch.no_grad():
+                y = self.model.generate(
+                    x, max_new_tokens=max_tokens, top_k=50
+                )
+
+            story = self.enc.decode(y[0].tolist())
+            self.root.after(0, self._show_result, story)
+        except Exception as e:
+            self.root.after(0, self._show_error, str(e))
+
+    def _show_result(self, story):
+        self.output_box.insert(tk.END, story)
+        self.status_var.set("Done.")
+        self.generate_btn.config(state="normal")
+
+    def _show_error(self, message):
+        self.output_box.insert(tk.END, f"Error: {message}")
+        self.status_var.set("Error during generation.")
+        self.generate_btn.config(state="normal")
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = StoryGeneratorApp(root)
+    root.mainloop()
